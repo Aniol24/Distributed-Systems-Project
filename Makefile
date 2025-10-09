@@ -1,12 +1,10 @@
-
-CC = gcc
-CFLAGS = -O2 -Wall -Wextra
-
-all: master
-
-master: master.c
-	$(CC) $(CFLAGS) -o master master.c
-
-clean:
-	rm -f master
-
+# Compiler
+CXX = g++
+# Compiler flags
+CXXFLAGS = -Wall -std=c++17
+# Target executable
+TARGET = main
+# Source files
+SRCS = main.cpp Counter.cpp
+# Object files
+OBJS = $(SRCS:.cpp=.o)
