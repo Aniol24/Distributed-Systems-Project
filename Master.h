@@ -25,20 +25,8 @@ class Master {
         void error_handler(int signal);
 
         bool Server_start(uint16_t port);
+
+        bool process_request();
 };
 
-int main(int argc, char **argv) {
-  uint16_t port = (argc >= 2) ? (uint16_t)atoi(argv[1]) : 5000;
-  Master master;
-  signal(SIGINT, master.error_handler);
-  signal(SIGTERM, master.error_handler);
 
-  
-  if (!master.Server_start(port)) printf("Error iniciant el servidor\n");
-  
-
-  while (running)
-    pause();
-
-  return 0;
-}

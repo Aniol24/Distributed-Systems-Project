@@ -8,3 +8,5 @@ TARGET = main
 SRCS = main.cpp Counter.cpp
 # Object files
 OBJS = $(SRCS:.cpp=.o)
+
+all: 
