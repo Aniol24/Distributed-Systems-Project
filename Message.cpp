@@ -1,35 +1,65 @@
 #include "Message.h"
+
+#include <arpa/inet.h>  
+#include <unistd.h>     
 #include <cstring>
-#include <io.h>
+#include <cerrno>
 
-Message::Message(uint8_t type, uint32_t var): type(type), var(var) {};
-
-Message::Message(uint8_t buffer[]) {
-    memcpy(&type, buffer, sizeof(type));
-    memcpy(&var, buffer + sizeof(type), sizeof(var));
+static bool send_all(int fd, const uint8_t* buf, std::size_t n) {
+  std::size_t sent = 0;
+  while (sent < n) {
+    ssize_t w = ::write(fd, buf + sent, n - sent);
+    if (w < 0) {
+      if (errno == EINTR) continue;
+      return false;
+    }
+    if (w == 0) return false;
+    sent += static_cast<std::size_t>(w);
+  }
+  return true;
 }
 
-uint8_t Message::get_type() {
-    return this->type;
+static bool recv_exact(int fd, uint8_t* buf, std::size_t n) {
+  std::size_t got = 0;
+  while (got < n) {
+    ssize_t r = ::read(fd, buf + got, n - got);
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      return false;
+    }
+    if (r == 0) return false;
+    got += static_cast<std::size_t>(r);
+  }
+  return true;
 }
 
-uint32_t Message::get_var() {
-    return this->var;
+// FUNCIONS PER ENVIAR I REBRE MISSATGES
+
+Message::Message(const uint8_t raw[kSize]) {
+  type_ = static_cast<Msg>(raw[0]);
+  uint32_t netv;
+  std::memcpy(&netv, raw + 1, sizeof(netv));
+  var_ = ntohl(netv);
 }
 
-bool Message::message_send(int socket_fd) {
-
-    // Serialize the message
-    uint8_t buffer[sizeof(type) + sizeof(var)];
-    memcpy(buffer, &type, sizeof(type));
-    memcpy(buffer + sizeof(type), &var, sizeof(var));
-
-    // Send the message
-    ssize_t bytes_sent = write(socket_fd, &buffer, sizeof(buffer));
-    return bytes_sent == sizeof(buffer);
+void Message::serialize(uint8_t out[kSize]) const {
+  out[0] = static_cast<uint8_t>(type_);
+  uint32_t netv = htonl(var_);
+  std::memcpy(out + 1, &netv, sizeof(netv));
 }
 
-string Message::to_string() {
-    return "Message(type=" + std::to_string(this->type) + ", var=" + std::to_string(this->var) + ")";
+bool Message::send(int fd, Msg t, uint32_t v) {
+  uint8_t buf[kSize];
+  Message m(t, v);
+  m.serialize(buf);
+  return send_all(fd, buf, kSize);
 }
 
+bool Message::recv(int fd, Msg &t, uint32_t &v) {
+  uint8_t buf[kSize];
+  if (!recv_exact(fd, buf, kSize)) return false;
+  Message m(buf);
+  t = m.type();
+  v = m.var();
+  return true;
+}
