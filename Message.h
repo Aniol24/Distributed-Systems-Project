@@ -22,7 +22,7 @@ class Message {
 public:
   static constexpr std::size_t kSize = 1 + 4; // type (1) + var (4)
 
-  Message() : type_(Msg::HELLO), var_(0) {}
+  Message(){}
   Message(Msg t, uint32_t v = 0) : type_(t), var_(v) {}
 
   explicit Message(const uint8_t raw[kSize]);
