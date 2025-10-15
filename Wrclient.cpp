@@ -106,11 +106,3 @@ bool WRClient::run(int iterations, bool read_only) {
     }
     return true;
 }
-
-int main(){
-    WRClient client(12345);
-    client.connect_server();
-    client.run(5, false);
-    client.close_server();
-    return 0;
-}
