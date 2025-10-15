@@ -3,7 +3,7 @@
 */
 
 #include "Wrclient.h"
-#include "Message.h"
+#include "../Message/Message.h"
 
 
 WRClient::WRClient(int port): port(port) {}   

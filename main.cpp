@@ -1,8 +1,8 @@
 #include <iostream>
 #include <string>
 #include <csignal>
-#include "Master.h"
-#include "Wrclient.h"
+#include "Master/Master.h"
+#include "Client/Wrclient.h"
 
 void ignore_sigpipe() { signal(SIGPIPE, SIG_IGN); }
 
