@@ -18,13 +18,18 @@ enum class Msg : uint8_t {
   ERR          = 0x7F   // (srv→cli) var = codi d'error
 };
 
+enum class Err : uint32_t {
+  E_PROTO       = 1,   // Missatge desconegut
+  E_NOT_HOLDER  = 2,   // Operació reservada al holder del lock
+  E_CLOSED      = 3,   // Tancament del servidor/cliente
+};
+
 class Message {
 public:
   static constexpr std::size_t kSize = 1 + 4; // type (1) + var (4)
 
-  Message(){}
+  Message() = default;
   Message(Msg t, uint32_t v = 0) : type_(t), var_(v) {}
-
   explicit Message(const uint8_t raw[kSize]);
 
   void serialize(uint8_t out[kSize]) const;
@@ -36,6 +41,6 @@ public:
   uint32_t  var()  const { return var_;  }
 
 private:
-  Msg       type_;  
-  uint32_t  var_;   
+  Msg       type_{Msg::READ_REQ}; 
+  uint32_t  var_{0};
 };
