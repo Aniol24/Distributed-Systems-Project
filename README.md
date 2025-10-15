@@ -11,7 +11,7 @@ Each client can either:
 
 ## Architecture
 
-![Architecture Diagram](img\image.png)
+![Architecture Diagram](img/image.png)
 
 The **Master** listens on a TCP port (`127.0.0.1:12345`) and coordinates access using
 a lock system (mutual exclusion).  
