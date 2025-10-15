@@ -3,7 +3,7 @@
 */
 
 #include "Wrclient.h"
-#include "Message.h"
+#include "../Message/Message.h"
 
 
 WRClient::WRClient(int port): port(port) {}   
@@ -105,12 +105,4 @@ bool WRClient::run(int iterations, bool read_only) {
         ::sleep(1); 
     }
     return true;
-}
-
-int main(){
-    WRClient client(12345);
-    client.connect_server();
-    client.run(5, false);
-    client.close_server();
-    return 0;
 }
