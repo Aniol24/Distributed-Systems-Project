@@ -1,171 +1,287 @@
-# lightweight_b.py
 import socket
 import threading
 import time
-import json
 import sys
+import random
 
-# --- Helpers for message encoding/decoding ---
-def encode(msg: dict) -> bytes:
-    return (json.dumps(msg) + "\n").encode("utf-8")
+can_run = False  # external start gate
 
-def decode_line(line: bytes) -> dict:
-    return json.loads(line.decode("utf-8"))
-
-# --- Lamport Clock (used for timestamps) ---
-class LamportClock:
-    def __init__(self):
-        self.c = 0
-    def tick(self):
-        self.c += 1
-        return self.c
-    def send(self):
-        self.c += 1
-        return self.c
-    def recv(self, t):
-        self.c = max(self.c, t) + 1
-        return self.c
-    def now(self):
-        return self.c
-
-# --- Lightweight Process B (Ricart–Agrawala mutual exclusion) ---
-class LightweightB:
-    def __init__(self, my_id, listen_port, hw_addr, peers):
-        self.my_id = my_id
-        self.listen_port = listen_port
-        self.hw_addr = hw_addr  # heavyweight address (host, port)
-        self.peers = peers      # list of (id, port) for B1, B2, B3
-        self.clock = LamportClock()
-        self.request_ts = None
-        self.deferred = set()   # set of (peer_id, ts)
-        self.waiting = set()    # set of (peer_id, port)
-        self.running = True
-
-    # --- Networking ---
-    def _send(self, addr, msg):
+def send_to_screen(message, host="127.0.0.1", port=6000):
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((host, port))
+        s.sendall((message + "\n").encode("utf-8"))
+    except Exception:
+        pass
+    finally:
         try:
-            s = socket.create_connection(addr, timeout=2)
-            s.sendall(encode(msg))
             s.close()
-        except Exception as e:
-            print(f"[{self.my_id}] Error sending to {addr}: {e}")
+        except Exception:
+            pass
 
-    def listen_loop(self):
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(("127.0.0.1", self.listen_port))
-        srv.listen(8)
-        print(f"[{self.my_id}] Listening on port {self.listen_port}")
-        while self.running:
-            c, _ = srv.accept()
+def sorted_ids(peer_ports):
+    """Stable, deterministic order of process IDs."""
+    return sorted(peer_ports.keys())
+
+class VectorClock:
+    def __init__(self, ids, self_id):
+        self.ids = ids               # ordered list of all IDs
+        self.index = {pid: i for i, pid in enumerate(ids)}
+        self.v = [0] * len(ids)
+        self.self_id = self_id
+        self.lock = threading.Lock()
+
+    def tick(self):
+        with self.lock:
+            self.v[self.index[self.self_id]] += 1
+            return list(self.v)
+
+    def merge_and_tick(self, other_v):
+        with self.lock:
+            for i in range(len(self.v)):
+                self.v[i] = max(self.v[i], other_v[i])
+            self.v[self.index[self.self_id]] += 1
+            return list(self.v)
+
+    def snapshot(self):
+        with self.lock:
+            return list(self.v)
+
+    @staticmethod
+    def happens_before(a, b):
+        """Return True iff a -> b (a happens-before b)."""
+        leq = True
+        strict = False
+        for i in range(len(a)):
+            if a[i] > b[i]:
+                leq = False
+                break
+            if a[i] < b[i]:
+                strict = True
+        return leq and strict
+
+class RicartAgrawalaMutex:
+    def __init__(self, pid, peers):
+        """
+        pid: this process id (string)
+        peers: dict pid -> port
+        """
+        self.pid = pid
+        self.peers = peers
+        self.all_ids = sorted_ids(peers | {pid: None})  # include self
+        self.vc = VectorClock(self.all_ids, pid)
+        self.requesting = False
+        self.request_vc = None   # vector clock at request time
+        self.replies = set()     # pids that replied
+        self.deferred = set()    # pids to whom we owe a reply
+        self.lock = threading.Lock()
+
+    def broadcast(self, msg):
+        for peer_id, peer_port in self.peers.items():
             try:
-                line = c.makefile("rb").readline()
-                if not line:
-                    c.close()
-                    continue
-                msg = decode_line(line)
-                self.handle_message(msg)
-            finally:
-                c.close()
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(("127.0.0.1", peer_port))
+                s.sendall((msg + "\n").encode("utf-8"))
+                s.close()
+            except Exception:
+                pass
 
-    # --- Ricart–Agrawala handlers ---
+    def send_reply(self, to_pid):
+        port = self.peers.get(to_pid)
+        if port is None:
+            return
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect(("127.0.0.1", port))
+            # include current vector clock
+            vc = self.vc.tick()
+            payload = f"REPLY {to_pid} {self.pid} {' '.join(map(str, vc))}"
+            s.sendall((payload + "\n").encode("utf-8"))
+            s.close()
+        except Exception:
+            pass
+
     def request_cs(self):
-        ts = self.clock.send()
-        self.request_ts = ts
-        self.waiting = {peer for peer in self.peers if peer[0] != self.my_id}
-        req = {"type": "REQUEST", "sender": self.my_id, "ts": ts}
-        for peer in self.peers:
-            if peer[0] != self.my_id:  # don't send to self
-                self._send(("127.0.0.1", peer[1]), req)
+        with self.lock:
+            self.requesting = True
+            self.replies.clear()
+            # take a vector clock snapshot after local tick
+            req_vc = self.vc.tick()
+            self.request_vc = req_vc
+
+        # broadcast REQUEST with vector clock
+        payload = f"REQUEST {self.pid} {' '.join(map(str, req_vc))}"
+        self.broadcast(payload)
+
+    def can_enter(self):
+        with self.lock:
+            return self.requesting and len(self.replies) == len(self.peers)
 
     def release_cs(self):
-        self.clock.tick()
-        # Send REPLY to all deferred peers
-        for peer_id, _ts in list(self.deferred):
-            rep = {"type": "REPLY", "sender": self.my_id, "ts": self.clock.send()}
-            for peer in self.peers:
-                if peer[0] == peer_id:
-                    self._send(("127.0.0.1", peer[1]), rep)
-                    break
-        self.deferred.clear()
-        self.request_ts = None
+        # after CS, send deferred replies
+        to_reply = []
+        with self.lock:
+            self.requesting = False
+            to_reply = list(self.deferred)
+            self.deferred.clear()
+            self.request_vc = None
+            self.vc.tick()  # logical progress
+        for pid in to_reply:
+            self.send_reply(pid)
 
-    def handle_message(self, msg):
-        mtype = msg.get("type")
-        if mtype == "REQUEST":
-            self.clock.recv(msg["ts"])
-            tsj, sender = msg["ts"], msg["sender"]
-            # If I am not requesting or my request has lower priority, reply immediately
-            if self.request_ts is None or (self.request_ts, self.my_id) > (tsj, sender):
-                rep = {"type": "REPLY", "sender": self.my_id, "ts": self.clock.send()}
-                for peer in self.peers:
-                    if peer[0] == sender:
-                        self._send(("127.0.0.1", peer[1]), rep)
-                        break
+    def handle_request(self, from_pid, from_vc):
+        """
+        Decide whether to REPLY immediately or defer, according to RA + vector clocks.
+        Priority rule:
+          - If from_vc happens-before our request_vc: peer has priority -> REPLY.
+          - If our request_vc happens-before from_vc: we have priority -> defer.
+          - If concurrent: tie-break by pid (smaller pid wins).
+        If not currently requesting, REPLY immediately.
+        """
+        with self.lock:
+            # merge their clock, tick locally
+            self.vc.merge_and_tick(from_vc)
+
+            if not self.requesting or self.request_vc is None:
+                # not competing -> reply immediately
+                immediate = True
             else:
-                # Defer reply
-                self.deferred.add((sender, tsj))
+                a = from_vc
+                b = self.request_vc
+                if VectorClock.happens_before(a, b):
+                    immediate = True
+                elif VectorClock.happens_before(b, a):
+                    immediate = False
+                else:
+                    # concurrent: pid tie-break (string compare ensures deterministic order)
+                    immediate = (from_pid < self.pid)
 
-        elif mtype == "REPLY":
-            self.clock.recv(msg["ts"])
-            # Mark peer as replied
-            self.waiting = {peer for peer in self.waiting if peer[0] != msg["sender"]}
+            if immediate:
+                pass
+            else:
+                self.deferred.add(from_pid)
 
-        elif mtype == "RELEASE":
-            # Optional: not strictly needed in Ricart–Agrawala for reply bookkeeping
-            self.clock.recv(msg["ts"])
+        if immediate:
+            self.send_reply(from_pid)
 
-        elif mtype == "CS_GRANT":
-            # Heavyweight says our group can print; run CS sequence in a separate thread
-            threading.Thread(target=self._on_cs_grant, daemon=True).start()
+    def handle_reply(self, from_pid, from_vc):
+        with self.lock:
+            self.vc.merge_and_tick(from_vc)
+            self.replies.add(from_pid)
 
-    def can_enter_cs(self):
-        return len(self.waiting) == 0 and self.request_ts is not None
-
-    def write_to_screen(self, msg):
-        try:
-            s = socket.create_connection(("127.0.0.1", 6000), timeout=2)
-            s.sendall((msg + "\n").encode("utf-8"))
-            s.close()
-        except Exception as e:
-            print(f"[{self.my_id}] Error writing to screen: {e}")
-
-    # --- Sequence triggered by CS_GRANT ---
-    def _on_cs_grant(self):
-        print(f"[{self.my_id}] Received CS_GRANT from heavyweight")
-        # Request CS among peers
-        self.request_cs()
-        # Wait until allowed
-        while not self.can_enter_cs():
-            time.sleep(0.2)
-        # Critical section: print 10 times
-        for _ in range(10):
-            self.write_to_screen(f"I'm lightweight process {self.my_id}")
-            time.sleep(1)
-        # Release CS and notify heavyweight
-        self.release_cs()
-        self._send(self.hw_addr, {"type": "DONE", "sender": self.my_id, "ts": self.clock.tick()})
-
-    # --- Main loop ---
-    def run(self):
-        # Start listener (handles REQUEST/REPLY/CS_GRANT)
-        threading.Thread(target=self.listen_loop, daemon=True).start()
-        # Keep the process alive
+def listener(server_socket, mutex: RicartAgrawalaMutex):
+    server_socket.settimeout(1.0)
+    try:
         while True:
-            time.sleep(1)
+            try:
+                conn, _ = server_socket.accept()
+            except socket.timeout:
+                continue
 
-# --- Entry point with arguments ---
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python lightweight_b.py <ID> <PORT>")
-        sys.exit(1)
+            try:
+                data = conn.recv(2048).decode("utf-8").strip()
+            except Exception:
+                data = ""
+            if not data:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                continue
 
-    my_id = sys.argv[1]             # e.g. "B1"
-    listen_port = int(sys.argv[2])  # e.g. 5201
-    hw_addr = ("127.0.0.1", 5001)   # heavyweight B
+            parts = data.split()
+            # Protocol:
+            # REQUEST <from_pid> <vc...>
+            # REPLY   <to_pid> <from_pid> <vc...>
+            try:
+                if parts[0] == "REQUEST":
+                    from_pid = parts[1]
+                    from_vc = list(map(int, parts[2:]))
+                    mutex.handle_request(from_pid, from_vc)
 
-    # Define peers statically for B group
-    peers = [("B1", 5201), ("B2", 5202), ("B3", 5203)]
+                elif parts[0] == "REPLY":
+                    to_pid = parts[1]
+                    from_pid = parts[2]
+                    if to_pid == mutex.pid:
+                        from_vc = list(map(int, parts[3:]))
+                        mutex.handle_reply(from_pid, from_vc)
 
-    lw = LightweightB(my_id, listen_port, hw_addr, peers)
-    lw.run()
+                elif parts[0] == "TOKEN":
+                    # external start signal
+                    global can_run
+                    can_run = True
+            except Exception:
+                # robust to malformed input
+                pass
+
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except KeyboardInterrupt:
+        try:
+            server_socket.close()
+        except Exception:
+            pass
+        sys.exit(0)
+
+def light_weight_process(id: str, port: int, peer_ports: dict, hw_port):
+    global can_run
+
+    # include self in ID universe
+    peer_ports = dict(peer_ports)  # shallow copy
+    if id in peer_ports:
+        # ensure no conflict
+        del peer_ports[id]
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind(("127.0.0.1", port))
+    server_socket.listen()
+    send_to_screen(f"[{id}] listening on 127.0.0.1:{port}")
+
+    mutex = RicartAgrawalaMutex(id, peer_ports)
+
+    listener_thread = threading.Thread(target=listener, args=(server_socket, mutex), daemon=False)
+    listener_thread.start()
+
+    try:
+        while True:
+            while not can_run:
+                time.sleep(0.1)
+
+            # perform 10 CS entries
+            for _ in range(10):
+                time.sleep(random.uniform(0, 3))
+                mutex.request_cs()
+                while not mutex.can_enter():
+                    time.sleep(0.05)
+
+                send_to_screen(f"I am light weight process [{id}] entering critical section.")
+                time.sleep(1)
+
+                mutex.release_cs()
+
+            # notify completion
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect(("127.0.0.1", hw_port))
+                s.sendall(f"DONE {id}\n".encode("utf-8"))
+                s.close()
+            except Exception:
+                pass
+
+            can_run = False
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            server_socket.close()
+        except Exception:
+            pass
+        try:
+            listener_thread.join(timeout=1.0)
+        except Exception:
+            pass
+        sys.exit(0)

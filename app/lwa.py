@@ -113,6 +113,10 @@ def listener(server_socket, mutex):
                 mutex.tick(ts)
                 mutex.queue = [(t, i) for (t, i) in mutex.queue if i != pid]
 
+            elif parts[0] == "TOKEN":
+                global can_run
+                can_run = True
+
             try:
                 conn.close()
             except Exception:
@@ -125,8 +129,8 @@ def listener(server_socket, mutex):
             pass
         sys.exit(0)
 
-def light_weight_process(id: str, port: int, peer_ports: dict):
-    global can_run, has_token
+def light_weight_process(id: str, port: int, peer_ports: dict, hw_port):
+    global can_run
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -140,22 +144,27 @@ def light_weight_process(id: str, port: int, peer_ports: dict):
     listener_thread = threading.Thread(target=listener, args=(server_socket, mutex), daemon=False)
     listener_thread.start()
 
+    
     try:
-        while not can_run:
-            time.sleep(0.1)
-
-        while can_run:
-            time.sleep(random.uniform(0, 3))
-            mutex.request_cs()
-            while not mutex.can_enter():
+        while True:
+            while not can_run:
                 time.sleep(0.1)
+            # Do 10 CS entries
+            for _ in range(10):
+                time.sleep(random.uniform(0, 3))
+                mutex.request_cs()
+                while not mutex.can_enter():
+                    time.sleep(0.05)
 
-            send_to_screen(f"I am light weight process [{id}] entering critical section.")
-            time.sleep(1)
-            #send_to_screen(f"[{id}] EXIT critical section")
+                send_to_screen(f"I am light weight process [{id}] entering critical section.")
+                time.sleep(1)
+                mutex.release_cs()
 
-            mutex.release_cs()
-            
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect(("127.0.0.1", hw_port))
+            s.sendall(f"DONE {id}\n".encode("utf-8"))
+            can_run = False
+    
     except KeyboardInterrupt:
         print(f"[{id}] Interrupted, shutting down")
     finally:
@@ -168,3 +177,7 @@ def light_weight_process(id: str, port: int, peer_ports: dict):
         except Exception:
             pass
         sys.exit(0)
+        
+
+            
+    

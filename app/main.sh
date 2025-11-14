@@ -20,7 +20,7 @@ PID_HWA=$!
 sleep 1
 
 # Start hwb.py in background
-python hwb.py 5000 &
+python hwb.py 4000 &
 PID_HWB=$!
 
 # Cleanup function
