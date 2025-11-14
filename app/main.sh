@@ -5,7 +5,7 @@ pkill -f screen_server.py
 pkill -f hwa.py
 pkill -f hwb.py
 
-#clean the Terminal
+# clean the Terminal
 clear
 
 # Start screen server first
@@ -26,12 +26,13 @@ PID_HWB=$!
 # Cleanup function
 cleanup() {
     echo "Stopping all processes..."
-    kill $PID_SCREEN $PID_HWA $PID_HWB 2>/dev/null
+    kill -9 $PID_SCREEN $PID_HWA $PID_HWB 2>/dev/null
     exit 0
 }
 
-# Trap Ctrl+C
+# Trap Ctrl+C and run cleanup
 trap cleanup SIGINT
 
 # Keep script alive until you press Ctrl+C
 wait
+# End of script

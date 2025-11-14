@@ -4,37 +4,56 @@ import socket
 import threading
 import lwa
 
-
 def start_server(listen_port, host="127.0.0.1"):
-    # --- start three threads of light_weight_process ---
-    t = [None] * 3
-    t[0] = threading.Thread( target=lwa.light_weight_process, args=("LA1", 5101, [5102, 5103]), daemon=True)
-    t[1] = threading.Thread( target=lwa.light_weight_process, args=("LA2", 5102, [5101, 5103]), daemon=True)
-    t[2] = threading.Thread( target=lwa.light_weight_process, args=("LA3", 5103, [5101, 5102]), daemon=True)
-    for i in range(3):
-        t[i].start()
-        #send_to_screen(f"[HWA] Started thread {i}")
+    # --- start three Lamport processes as threads ---
+    threads = []
+    threads.append(threading.Thread(target=lwa.light_weight_process,
+                                    args=("LA1", 5101, {"LA2": 5102, "LA3": 5103}),
+                                    daemon=False))
+    threads.append(threading.Thread(target=lwa.light_weight_process,
+                                    args=("LA2", 5102, {"LA1": 5101, "LA3": 5103}),
+                                    daemon=False))
+    threads.append(threading.Thread(target=lwa.light_weight_process,
+                                    args=("LA3", 5103, {"LA1": 5101, "LA2": 5102}),
+                                    daemon=False))
 
-    lwa.can_run = True 
+    for t in threads:
+        t.start()
 
+    # allow Lamport processes to run
+    lwa.can_run = True
+
+    # control server socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((host, listen_port))
     server_socket.listen()
-    #send_to_screen(f"[HWA] Server started on {host}:{listen_port}")
-    #send_to_screen("[HWA] Waiting for a connection...")
+    server_socket.settimeout(1.0)  # periodic wakeup
 
-    while True:
-        conn, addr = server_socket.accept()
-        #send_to_screen(f"[HWA] Connected by {addr}")
-        with conn:
-            while True:
-                data = conn.recv(1024)
-                if not data:
-                    break
-                msg = data.decode("utf-8")
-                #send_to_screen(f"[HWA] Received: {msg}")
-                conn.sendall(b"Message received")
+    try:
+        while True:
+            try:
+                conn, addr = server_socket.accept()
+            except socket.timeout:
+                continue  # loop back, allows KeyboardInterrupt to be raised
+            with conn:
+                while True:
+                    data = conn.recv(1024)
+                    if not data:
+                        break
+                    msg = data.decode("utf-8")
+                    conn.sendall(b"Message received")
+    except KeyboardInterrupt:
+        print("Interrupted, shutting down")
+    finally:
+        try:
+            server_socket.close()
+        except Exception:
+            pass
+        # join worker threads to exit cleanly
+        for t in threads:
+            t.join(timeout=1.0)
+        sys.exit(0)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
