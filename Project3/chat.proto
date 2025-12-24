@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package chat;
+
+service ChatService {
+  rpc SendMessage (Message) returns (Status);
+  rpc GetMessages (GetRequest) returns (Messages);
+}
+
+message Message {
+  string nickname = 1;
+  string text = 2;
+}
+
+message Status {
+  bool ok = 1;
+}
+
+message GetRequest {
+  int32 last_line = 1;
+}
+
+message Messages {
+  repeated string lines = 1;
+  int32 new_last_line = 2;
+}
