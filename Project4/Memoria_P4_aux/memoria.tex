@@ -1,0 +1,183 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage[catalan]{babel}
+
+% Marges
+\geometry{top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm}
+
+% Estil dels fragments de codi
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+
+\lstset{style=mystyle}
+
+\title{
+    \textbf{Exercici 4 de Sistemes Distribuïts: Replicació Epidèmica} \\
+    \large Curs Acadèmic 2025-2026
+}
+\author{
+    Aniol Vergés Herrera \\
+    Aleix Batchellí I Abad \\
+    \textit{La Salle - Universitat Ramon Llull}
+}
+\date{}
+
+\begin{document}
+
+\maketitle
+\pagebreak
+\tableofcontents
+\newpage
+
+\section{Introducció}
+Aquest informe detalla el disseny i la implementació d'una aplicació de sistemes distribuïts centrada en la \textbf{Replicació Epidèmica}. L'objectiu d'aquest exercici és implementar una arquitectura multicapa on la consistència de les dades varia segons les capes, des d'una consistència forta al nucli fins a una consistència causal a les capes exteriors.
+
+El sistema consta de 7 nodes organitzats en 3 capes diferents, dissenyats per simular una topologia de xarxa realista on les estratègies de propagació difereixen (Ansiosa vs. Mandrosa).
+
+\section{Arquitectura del Sistema}
+
+\subsection{Topologia}
+El sistema consta de tres capes que contenen un total de 7 nodes.
+
+% --- DIAGRAMA RECOMANAT 1: TOPOLOGIA ---
+\begin{figure}[H]
+    \centering
+    % Descomenta si tens el diagrama de topologia també
+    \includegraphics[width=0.8\textwidth]{diagrama_topologia.png}
+    \caption{Diagrama de la topologia de la xarxa mostrant les 3 capes i les connexions entre els nodes A, B i C.}
+    \label{fig:topologia}
+\end{figure}
+
+\begin{itemize}
+\item \textbf{Capa Nucli (Capa 0):} Nodes A1, A2, A3. Aquests nodes mantenen les versions més actualitzades de les dades ($V=n$) i apliquen una consistència forta.
+\item \textbf{Capa 1:} Nodes B1, B2. Aquests nodes mantenen versions més antigues ($V=n-1$) i utilitzen consistència causal.
+\item \textbf{Capa 2:} Nodes C1, C2. Aquests nodes mantenen les versions més antigues ($V=n-2$) i representen el nivell de consistència més feble.
+\end{itemize}
+
+\subsection{Models de Consistència i Replicació}
+El sistema implementa una estratègia de replicació híbrida tal com es defineix als requisits:
+
+\begin{enumerate}
+    \item \textbf{Capa Nucli (Nodes A):} Utilitza \textit{Actualització a tot arreu, Activa i Replicació Ansiosa (Eager)}. Les actualitzacions es propaguen immediatament entre els nodes del nucli per garantir una consistència forta.
+    \item \textbf{Capa 1 (Nodes B):} Utilitza \textit{Replicació Passiva, Còpia Primària i Mandrosa (Lazy)}. La sincronització es produeix cada 10 actualitzacions.
+    \item \textbf{Capa 2 (Nodes C):} Utilitza \textit{Replicació Passiva, Còpia Primària i Mandrosa (Lazy)}. La sincronització es produeix cada 10 segons.
+\end{enumerate}
+
+\section{Detalls d'Implementació}
+
+\subsection{Pila Tecnològica}
+La solució s'ha implementat en Python, utilitzant biblioteques estàndard per minimitzar les dependències:
+\begin{itemize}
+    \item \textbf{Multiprocessing:} Utilitzat per simular nodes diferents com a processos separats dins d'una sola màquina.
+    \item \textbf{Sockets:} Utilitzats per a la comunicació TCP entre nodes i clients.
+    \item \textbf{WebSockets:} Utilitzats per al monitoratge en temps real de les rèpliques.
+\end{itemize}
+
+\subsection{Lògica i Orquestració dels Nodes}
+El punt d'entrada del sistema, \texttt{main.py}, gestiona la configuració de la topologia i la creació de processos. Un registre mapeja els identificadors dels nodes a ports específics (començant des del 5001 per a A1), i un diccionari de topologia defineix les relacions entre veïns.
+
+% --- DIAGRAMA RECOMANAT 2: DIAGRAMA DE CLASSES ---
+\begin{figure}[H]
+    \centering
+    % \includegraphics[width=0.7\textwidth]{diagrama_classes.png}
+    \caption{Estructura de classes dels nodes mostrant l'herència i els mètodes específics per a cada estratègia de replicació.}
+    \label{fig:classes}
+\end{figure}
+
+S'instancien classes diferents basant-se en el prefix de l'ID del node per gestionar la lògica de replicació diferenciada:
+
+\begin{lstlisting}[language=Python, caption=Lògica d'Instanciació de Nodes (main.py)]
+if node_id.startswith("A"):
+    node_instance = CoreNode(node_id, my_port, neighbors)
+elif node_id.startswith("B"):
+    node_instance = Layer1Node(node_id, my_port, neighbors)
+elif node_id.startswith("C"):
+    node_instance = Layer2Node(node_id, my_port, neighbors)
+\end{lstlisting}
+
+Aquesta estructura assegura que \texttt{CoreNode} gestioni la replicació ansiosa, mentre que \texttt{Layer1Node} i \texttt{Layer2Node} implementen les seves respectives estratègies mandroses (basades en comptador vs. basades en temps).
+
+\subsection{Implementació del Client}
+L'aplicació client (\texttt{client.py}) és responsable d'analitzar les transaccions i encaminar-les a la capa adequada.
+
+\subsubsection{Anàlisi de Transaccions}
+Les transaccions es llegeixen des d'un fitxer o mitjançant entrada manual. El client distingeix entre tipus de transaccions basant-se en el format del valor:
+\begin{itemize}
+    \item \textbf{Escriptura (Actualització):} Identificada per valors de coma flotant (ex., \texttt{49.53}). Aquestes s'encaminen \textbf{sempre} a la Capa Nucli (Capa 0), independentment de la capa sol·licitada a la cadena de transacció.
+    \item \textbf{Només Lectura:} Identificada per valors enters (ex., \texttt{49}). Aquestes s'encaminen a la capa específica sol·licitada ($<f>$).
+\end{itemize}
+
+\begin{lstlisting}[language=Python, caption=Heurística d'Encaminament del Client (client.py)]
+# Heurística: Els floats són actualitzacions (49.53)
+is_write = '.' in val_str 
+
+# Les escriptures SEMPRE van al Nucli (Capa 0)
+# Les lectures van a la capa especificada
+target_layer = 0 if is_write else layer_id_requested
+\end{lstlisting}
+
+\section{Protocols de Replicació}
+
+% --- DIAGRAMA DE FLUX AFEGIT ---
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{flux-diagram.png}
+    \caption{Diagrama de flux que il·lustra el flux d'una escriptura al nucli i la posterior propagació mandrosa a les capes exteriors.}
+    \label{fig:sequencia}
+\end{figure}
+
+\subsection{Capa Nucli: Replicació Ansiosa}
+Els nodes A1, A2 i A3 formen una malla totalment connectada (conceptualment). Quan un node del nucli rep una sol·licitud d'escriptura, bloqueja el recurs i fa difusió (multicast) de l'actualització als seus parells immediatament. Això assegura que la capa nucli convergeixi ràpidament, mantenint el requisit de tenir la "versió més moderna".
+
+\subsection{Capa 1: Replicació Mandrosa Basada en Comptador}
+Els nodes B1 i B2 actuen com a còpies de seguretat (backups). No sol·liciten actualitzacions contínuament. En canvi, mantenen un comptador d'operacions. Un cop el sistema registra 10 actualitzacions al Nucli, les dades s'envien a (o són recuperades per) la Capa 1. Això redueix el trànsit de xarxa a costa d'una obsolescència temporal ($V=n-1$).
+
+\subsection{Capa 2: Replicació Mandrosa Basada en Temps}
+Els nodes C1 i C2 representen la frontera de la consistència eventual. Operen en un bucle de temporitzador. Cada 10 segons, inicien un procés de sincronització amb el seu node pare (B2). Això assegura que, fins i tot si el trànsit d'actualitzacions és baix, la capa exterior acabi convergint.
+
+\section{Monitoratge i Validació}
+
+\subsection{Execució}
+El sistema es llança mitjançant la comanda \texttt{python main.py --all}, que genera 7 processos independents. El client s'executa per separat per emetre comandes de manera interactiva o mitjançant fitxers per lots.
+
+\subsection{Verificació de Convergència}
+Per verificar la naturalesa "Epidèmica" del sistema:
+\begin{enumerate}
+    \item S'envia una ràfega d'escriptures al Nucli.
+    \item Observem actualitzacions immediates als nodes A.
+    \item Els nodes B s'actualitzen només després de la 10a escriptura.
+    \item Els nodes C s'actualitzen de manera asíncrona cada 10 segons.
+    \item Quan les actualitzacions cessen, tots els nodes acaben informant del mateix hash de versió als seus registres locals.
+\end{enumerate}
+
+\section{Conclusió}
+Aquest projecte demostra amb èxit els compromisos entre consistència i rendiment en sistemes distribuïts. Mitjançant la implementació d'una arquitectura multicapa amb estratègies de replicació híbrides, hem observat com la consistència forta (Nucli) requereix una elevada sobrecàrrega de comunicació, mentre que la consistència causal (Capes 1 i 2) permet un trànsit reduït a costa de la frescor de les dades.
+
+\end{document}

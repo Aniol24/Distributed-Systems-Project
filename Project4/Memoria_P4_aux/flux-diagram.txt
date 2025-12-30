@@ -1,0 +1,44 @@
+@startuml
+skinparam participantStyle rect
+
+actor "Client" as C
+participant "Node A1 (Core)" as A1
+participant "Node A2 (Core)" as A2
+participant "Node B1 (Layer 1)" as B1
+
+title Diagrama de Seqüència: Escriptura al Nucli i Propagació Híbrida
+
+== Replicació Ansiosa (Eager) ==
+C -> A1 : WRITE "12 49.53 0"
+activate A1
+
+note right of A1
+  1. Bloqueja recurs
+  2. Escriu al log local
+end note
+
+A1 -> A2 : UpdatePeer("12 49.53")
+activate A2
+A2 --> A1 : ACK
+deactivate A2
+
+A1 --> C : OK (Success)
+deactivate A1
+
+== Replicació Mandrosa (Lazy) - Basada en Comptador ==
+note over A1, B1
+  El sistema espera fins que
+  es comptabilitzin 10 actualitzacions
+end note
+
+loop 10 Updates Reached
+    C -> A1 : (Altres Escriptures...)
+end
+
+A1 -> B1 : BatchUpdate(Llista de 10 canvis)
+activate B1
+B1 -> B1 : Actualitza Log Local
+B1 --> A1 : ACK
+deactivate B1
+
+@enduml

@@ -1,0 +1,52 @@
+@startuml
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam linetype ortho
+
+title Topologia del Sistema de Replicació Epidèmica
+
+package "Capa Nucli (Layer 0)\nConsistència Forta" as Core {
+    [Node A1] as A1
+    [Node A2] as A2
+    [Node A3] as A3
+    
+    note right of Core
+      Replicació Ansiosa (Eager)
+      Update Everywhere
+    end note
+}
+
+package "Capa 1 (Layer 1)\nConsistència Causal" as L1 {
+    [Node B1] as B1
+    [Node B2] as B2
+    
+    note right of L1
+      Replicació Mandrosa (Lazy)
+      Cada 10 Updates
+    end note
+}
+
+package "Capa 2 (Layer 2)\nConsistència Febl" as L2 {
+    [Node C1] as C1
+    [Node C2] as C2
+    
+    note right of L2
+      Replicació Mandrosa (Lazy)
+      Cada 10 Segons
+    end note
+}
+
+' Connexions del Nucli (Mesh)
+A1 -[thickness=2]- A2
+A2 -[thickness=2]- A3
+A3 -[thickness=2]- A1
+
+' Connexions Capa 1 (Basat en main.py)
+A2 ..> B1 : Push/Pull
+A3 ..> B2 : Push/Pull
+
+' Connexions Capa 2 (Basat en main.py)
+B2 ..> C1 : Push/Pull
+B2 ..> C2 : Push/Pull
+
+@enduml
